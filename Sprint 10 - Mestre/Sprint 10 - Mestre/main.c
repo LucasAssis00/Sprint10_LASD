@@ -5,7 +5,6 @@
  * Author : justi
  */ 
 
-
 #define F_CPU 16000000UL
 #include <avr/io.h>
 #include <util/delay.h>
@@ -22,10 +21,6 @@ int j = 0;							//para vetor automatico string
 int8_t manual_auto = 0;				//pra servir de "bool"
 //manual = 0, automatico = 1	
 
-
-uint8_t sirenes = 2;		//2 semaforo funciona normal, 1 vem um carro com sirene ligada no semáforo mestre, 0 vem carro com sirene ligada no semaforo escravo
-
-
 int aux = 0;					// variavel auxiliar para função exe4cuta tudo, pra não correr o risco ede executar mais de uma das configurações der cores nas leds
 
 uint32_t tempo_100us = 0;		// variavel que cnsidera a passagem do tempo
@@ -37,6 +32,9 @@ uint32_t contagem_carros = 0;	//variavel que mostra o total de carros passando
 
 uint8_t flag_500ms = 0;			//para o uso do ADC
 uint8_t flag_50ms = 0;
+
+uint8_t sirenes;
+
 
 
 unsigned char r_string[2] = "2", y_string[2] = "2", g_string[2] = "2"; //variaveis char para LED
@@ -59,6 +57,31 @@ void tempos_automaticos();
 void leitura_sensores_ADC(uint8_t *flag_disparo);
 
 void iluminacao(uint8_t *flag_disparo1);
+
+
+ISR(USART_RX_vect)
+{
+	unsigned char recebido;
+	recebido = UDR0;
+	switch(recebido)
+	{
+		case 'X':
+			sirenes = 0;			//sinal vermelho
+			break;
+		case 'Y':
+			sirenes = 1;			//sinal verde
+			break;
+		case 'Z':
+			sirenes = 2;			//funcionamento normal
+			//funciona apenas de X para outros e Y para outros, nao vai de Z para outros
+			break;
+		default:
+			break;
+	}
+}
+
+
+
 
 ISR(TIMER0_COMPA_vect)						//interrupcao do TC0 a cada 100us = (8*(199+1))/16MHz
 {
@@ -100,7 +123,6 @@ ISR(PCINT2_vect)			//pin D qlq
 			if(manual_auto>1)
 			manual_auto = 0;
 		}
-		
 		if(manual_auto == 0){			//funciona se tiver no modo manual
 			tempo[i]++;
 			if(tempo[i]>9)
@@ -109,8 +131,6 @@ ISR(PCINT2_vect)			//pin D qlq
 		if(manual_auto == 1){
 			tempos_automaticos();		//ajusta pelas equações se for modo auto
 		}
-		
-	
 
 		valores_atualizados_cores();
 
@@ -127,8 +147,6 @@ ISR(PCINT2_vect)			//pin D qlq
 			if(manual_auto<0)
 			manual_auto = 1;
 		}
-		
-		
 		if(manual_auto == 0){
 			tempo[i]--;
 			if(tempo[i]<1)
@@ -138,7 +156,6 @@ ISR(PCINT2_vect)			//pin D qlq
 			tempos_automaticos();
 		}
 		
-
 		valores_atualizados_cores();
 
 		nokia_lcd_render();
@@ -158,32 +175,6 @@ ISR(PCINT2_vect)			//pin D qlq
 		nokia_lcd_render();
 
 	}
-	
-	
-	
-	
-	
-
-	
-	if((PIND & 0b00000010) == 0)			//PD1 para saber se vem ambulância, bombeiros ou afins
-	{
-		sirenes++;
-		if(sirenes>2) sirenes = 0;
-		
-		if(sirenes == 1){
-			USART_Transmit('Y');		
-			PORTD |= 0b00000001;
-		}
-		if(sirenes == 0){
-			USART_Transmit('X');
-			PORTD &= 0b11111110;
-		}
-		if(sirenes == 2){
-			USART_Transmit('Z');
-			PORTD &= 0b11111110;			//2 semaforo funciona normal, 1 vem um carro com sirene ligada no semáforo mestre, 0 vem carro com sirene ligada no semaforo escravo
-		}
-	}	
-	
 
 }
 
@@ -191,17 +182,20 @@ ISR(PCINT2_vect)			//pin D qlq
 int main(void)
 {
 	DDRB |= 0b11111111;		//habilita leds verdes e vermelhas como saídas	//pode parar
-	DDRD |= 0b10000001;		//habilita led amarela como saída D7		//e sirene na D0
-	DDRD &= 0b10001010;		//habilita d6d5d4d2 como entradas											//d3 é saída			
-	PORTD |= 0b01110101;	//habilitar resistores de pull-up d6-d2
+	DDRD |= 0b10000000;		//habilita led amarela como saída D7		
+	DDRD &= 0b10001011;		//habilita d6d5d4d2 como entradas											//d3 é saída
+	PORTD |= 0b01110100;	//habilitar resistores de pull-up d6-d2
 
 
-	DDRC &= 0b11111100;		//habilita c0 como entrada, e c1 como pedestres
+	DDRC &= 0b11111110;		//habilita c0 como entrada
+	DDRC &= 0b10111111;		//habilita c6 como saida (tem ou n pedestres)
 
-	DDRD &= 0b11111101; //habilita d1 é entrada pra botao sirenes
-	PORTD |= 0b00000010; //habilita pullup d1
+	/*
+	DDRD &= 0b11111101; //habilita d1 como entrada
+	PORTD |= 0b00000010; //habilita pullup d1						//não deveria
+	*/
 
-	DDRD |= 0b00001000;	//habilita d3 como saida
+	DDRD |= 0b00001000;	//habilita d3 como saida					//iluminação
 
 
 	nokia_lcd_init();		//inicia lcd, dessa vez apenas no comeco
@@ -241,6 +235,7 @@ int main(void)
 	UBRR0L = (unsigned char)MYUBRR;
 	UCSR0B = (1<<RXCIE0)|(1<<RXEN0)|(1<<TXEN0); //Habilita o transmissor e o receptor
 	UCSR0C = (1<<USBS0)|(3<<UCSZ00); //Ajusta o formato do frame: 8 bits de dados e 2 de parada
+	//UCSR0C = (3<<UCSZ00); //Ajusta o formato do frame: 8 bits de dados e 1 de parada, PARIDADE NONE														//ve isso aq
 
 
 
@@ -260,25 +255,6 @@ executa_tudo(uint32_t TEMPO_100us)
 
 
 
-	if((tempo_100us - TEMPO_sprint_9) >= 10000){//5segundo -> passar pra 5 segundo						
-
-		transmissao[0] = 'g';			//nao sei pq ta funcionando assim, mas desse jeito sai na ordem certa
-		transmissao[2] = 'y';
-		transmissao[4] = 'r';
-
-		transmissao[1] = r_string[0];
-		transmissao[3] = y_string[0];			//não tá funcionando no tempo correto, mesmo com esse tempo de 5 segundos entre transmisões, por isso geralmente os semaforos não estão sincronizados 
-		transmissao[5] = g_string[0];
-
-		USART_Transmit(transmissao[0]);
-		USART_Transmit(transmissao[1]);
-		USART_Transmit(transmissao[2]);
-		USART_Transmit(transmissao[3]);
-		USART_Transmit(transmissao[4]);
-		USART_Transmit(transmissao[5]);		//faz a transmissao de cada caractere por vez, formato[g][tempo_verde][y][tempo_amarelo][r][tempo_vermelho]
-		
-		TEMPO_sprint_9 = tempo_100us;
-	}
 
 	
 	if((tempo_100us - TEMPO_para_clock) >= 50000){//a cada 5 segundos atualiza o contador
@@ -300,10 +276,27 @@ executa_tudo(uint32_t TEMPO_100us)
 	iluminacao(&flag_50ms);
 	
 
-	if(sirenes==2){
+	if(sirenes == 2){
 		if((tempo_100us - TEMPO_100us_anterior) >= 0)
 		{
 			if(aux==0){
+
+				transmissao[0] = 'g';			//nao sei pq ta funcionando assim, mas desse jeito sai na ordem certa
+				transmissao[2] = 'y';
+				transmissao[4] = 'r';
+
+				transmissao[1] = r_string[0];
+				transmissao[3] = y_string[0];			//não tá funcionando no tempo correto, mesmo com esse tempo de 5 segundos entre transmisões, por isso geralmente os semaforos não estão sincronizados
+				transmissao[5] = g_string[0];
+
+				USART_Transmit(transmissao[0]);
+				USART_Transmit(transmissao[1]);
+				USART_Transmit(transmissao[2]);
+				USART_Transmit(transmissao[3]);
+				USART_Transmit(transmissao[4]);
+				USART_Transmit(transmissao[5]);		//faz a transmissao de cada caractere por vez, formato[g][tempo_verde][y][tempo_amarelo][r][tempo_vermelho]
+
+
 				PORTB = 0b00001111;
 				aux++;
 			}
@@ -371,23 +364,17 @@ executa_tudo(uint32_t TEMPO_100us)
 			USART_Transmit('i');
 			TEMPO_100us_anterior = tempo_100us;
 			aux = 0;
-		}	
-	}																								//msm coisa sprint anteiror
+		}																										//msm coisa sprint anteiror
+	}
 	
 	if(sirenes == 1){
-		//TEMPO_100us_anterior = tempo_100us;
-		//PORTD |= 0b10000000;
-			//precisaria de algum tempo entre amarelo e vermelho
-		PORTB = 0b00001111;
+		PORTB = 0b00001111;		//sinal verde
 	}
 	
-	
-	
-	
-	if(sirenes == 0){
-		PORTB = 0b11110000;
+	if(sirenes==0){
+		PORTB = 0b11110000;		//sinal vermelho
 	}
-						//PORTB = 0b11110000;
+	
 }
 
 tempos_automaticos(){
@@ -420,6 +407,8 @@ void termos_iniciais_fixos(){
 	nokia_lcd_write_string("R. t.    ", 1);		//Foi deixado os termos em ingles(para RED, YELLOW e GREEN) para deixar só uma letra e economizar tela de LCD
 	nokia_lcd_set_cursor(0, 40);
 	nokia_lcd_write_string("Modo    ", 1);
+	nokia_lcd_set_cursor(60, 40);
+	nokia_lcd_write_string(UDR0, 1);
 }
 
 
@@ -507,7 +496,7 @@ void iluminacao(uint8_t *flag_disparo1)
 	{
 		
 		if((1023000/ADC - 1000)<300){															//com luz menos que 300
-			if(((PINC & 0b01000000) == 0)||(carrosporminuto>0))		//pedestres na Pc6			//se tiver pedestres nem carros
+			if(((PINC & 0b01000000) == 0)||(carrosporminuto>0))		//pedestres na PD3*			//se tiver pedestres nem carros
 			OCR2B=249;																			//100% luz no poste
 			else
 			OCR2B=75;																			//30% luz no poste

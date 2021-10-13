@@ -1,17 +1,18 @@
 /*
- * Sprint 10 - escravo.c
+ * Sprint 10 escravo.c
  *
- * Created: 10/10/2021 10:08:01 PM
+ * Created: 9/25/2021 10:42:22 AM
  * Author : justi
  */ 
 
 
-#define F_CPU 16000000UL
+
+#define F_CPU 16000000UL //Frequência de trabalho da CPU
+#define BAUD 9600
+#define MYUBRR F_CPU/16/BAUD-1
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
-#define BAUD 9600
-#define MYUBRR F_CPU/16/BAUD-1
 
 
 uint32_t tempo[3] = {1, 1, 4}; //pras 3 cores, vermelho, amarelo e verde, usadas durante o código e no display em inglês para ter iniciais diferentes
@@ -24,11 +25,18 @@ uint32_t tempo_100us = 0; // variavel que cnsidera a passagem do tempo
 char recebido;
 
 
+uint8_t sirenes=2;		//2 semaforo funciona normal, 1 vem um carro com sirene ligada no semáforo mestre, 0 vem carro com sirene ligada no semaforo escravo
+
+
+
 ISR(TIMER0_COMPA_vect) //interrupcao do TC0 a cada 100us = (8*(199+1))/16MHz
 {
 	executa_tudo(tempo_100us);	//acende LEDs antes de adicionar o termpo
 	tempo_100us++;
 }
+
+
+
 
 
 ISR(USART_RX_vect)
@@ -65,22 +73,46 @@ ISR(USART_RX_vect)
 
 
 
+ISR(INT1_vect)	//interrupcao pind3
+{
+		sirenes++;
+		if(sirenes>2) sirenes = 0;
+		
+		if(sirenes == 1){
+			USART_Transmit('Y');			//carro vindo pela faixa do mestre
+		}
+		if(sirenes == 0){
+			USART_Transmit('X');			//carro vindo pela faixa do escravo
+		}
+		if(sirenes == 2){
+			USART_Transmit('Z');			//funcionamento normal do semaforo
+		}
+}
+
+
+void USART_Transmit(unsigned char data)
+{
+	while(!( UCSR0A & (1<<UDRE0)));//Espera a limpeza do registr. de transmissão
+	UDR0 = data; //Coloca o dado no registrador e o envia
+}
+
+
+
+
 int main(void)
 {
 	DDRB |= 0b11111111; //habilita leds verdes e vermelhas como saídas
-	DDRD |= 0b10000000; //habilita led amarela como saída d7
+	DDRD |= 0b10110000; //habilita led amarela como saída D7				//D4 sirene de carro vindo no semáforo mestre, D3 sirene de carro vindo no semáforo escravo (não há mais portas disponíveis no mestre pra deixar lá)
+
+	DDRD &= 0b11110111;	//habilita d3 como entrada
+	PORTD |= 0b00001000;	//habilitar resistores de pull-up d3		//precisa?
 
 
-	DDRD &= 0b111100010; //habilitar botões como entrada d2 e d3 e d4		e d0
-	PORTD |= 0b00011101; //habilitar resistores de pull-up d2 e d3 e d4		e d0
-
-
-	EICRA = 0b00001010; //interrupcao externa int0 e int1 na borda de descida
-	EIMSK = 0b00000011; //habilita interrupcao externa int0 e int1
-
-	PCICR = 0b00000100; //habilita interrupção pcint2 port D ???
-	PCIFR = 0b00000100; //sinalizadores que indicam se ocorreu interrupcao em pcint2
-	PCMSK2 = 0b00010000; //habilita interrupção pcint2 port D4 ???
+	
+	//config. interrupcoes externas
+	EICRA = 0b00001010;
+	EIMSK = 0b00000011;
+	
 
 	TCCR0A = 0b00000010; //habilita modo CTC do TC0
 	TCCR0B = 0b00000010; //liga TC0 com prescaler = 8
@@ -91,7 +123,7 @@ int main(void)
 	UBRR0H = (unsigned char)(MYUBRR>>8); //Ajusta a taxa de transmissão, PARTE ALTA
 	UBRR0L = (unsigned char)MYUBRR;		//Ajusta a taxa de transmissão, PARTE BAIXA
 	UCSR0B = (1<<RXCIE0)|(1<<RXEN0)|(1<<TXEN0); //HABILITA A INTERRUP. DO RECEPTOR, Habilita o transmissor e o receptor
-	UCSR0C = (3<<UCSZ00); //Ajusta o formato do frame: 8 bits de dados e 1 de parada, PARIDADE NONE
+	UCSR0C = (3<<UCSZ00); //Ajusta o formato do frame: 8 bits de dados e 1 de parada, PARIDADE NONE														//ve isso aq
 	
 	sei(); //habilita a chave de interrupcao global
 
@@ -104,7 +136,9 @@ int main(void)
 executa_tudo(uint32_t TEMPO_100us)
 {
 	static uint32_t TEMPO_100us_anterior = 0;	//compara com o tempo_100us pra acender as combinações dos LEDs
-		if(recebido =='Z'){
+
+		if(sirenes==2){
+			PORTD &= 0b11001111;		//desliga alarmes
 			if((tempo_100us - TEMPO_100us_anterior) >= 0)
 			{
 				if(aux==0){
@@ -178,13 +212,16 @@ executa_tudo(uint32_t TEMPO_100us)
 				aux = 0;
 			}
 		}
-		
-		if(recebido =='X'){
-			PORTB = 0b00001111;
+		if(sirenes==1){
+			PORTB = 0b11110000;			//sinal vermelho
+			PORTD &= 0b11001111;		//desliga alarmes
+			PORTD |= 0b00010000;		//liga alarme carro vindo no mestre
 		}
 		
-		if(recebido =='X'){
-			PORTB = 0b11110000;
+		if(sirenes==0){
+			PORTB = 0b00001111;			//sinal verde
+			PORTD &= 0b11001111;		//desliga alarmes
+			PORTD |= 0b00100000;		//liga alarme carro vindo no escravo
 		}
+
 }
-//	if(recebido=='i'){
